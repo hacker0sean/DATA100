@@ -1,0 +1,168 @@
+import numpy as np
+
+import pandas as pd
+from pandas.api.types import CategoricalDtype
+
+% matplotlib
+inline
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn import linear_model as lm
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold
+
+# Plot settings
+plt.rcParams['figure.figsize'] = (12, 9)
+plt.rcParams['font.size'] = 12
+training_data = pd.read_csv("ames_train.csv")
+test_data = pd.read_csv("ames_test.csv")
+
+
+def remove_outliers(data, variable, lower=-np.inf, upper=np.inf):
+    """
+    Input:
+      data (data frame): the table to be filtered
+      variable (string): the column with numerical outliers
+      lower (numeric): observations with values lower than this will be removed
+      upper (numeric): observations with values higher than this will be removed
+
+    Output:
+      a winsorized data frame with outliers removed
+    """
+    return data[(data[variable] <= upper) & (data[variable] >= lower)]
+
+
+training_data = remove_outliers(training_data, 'Gr_Liv_Area', upper=5000)
+
+
+def add_total_bathrooms(data):
+    """
+    Input:
+      data (data frame): a data frame containing at least 4 numeric columns
+            Bsmt_Full_Bath, Full_Bath, Bsmt_Half_Bath, and Half_Bath
+    Output:
+      data frame identical to the input with the addition of a total_bathrooms column
+    """
+    for i in ["Bsmt_Full_Bath", "Full_Bath", "Bsmt_Half_Bath", "Half_Bath"]:
+        data[i] = data[i].fillna(0)
+    data["total_bathrooms"] = data.Bsmt_Full_Bath + data.Full_Bath + 1 / 2 * (data.Bsmt_Half_Bath + data.Half_Bath)
+    return data
+
+
+def standardize_columns(data):
+    '''
+    Input:
+      data (data frame): contains only numeric columns
+    Output:
+      data frame, the same data, except each column is standardized
+      to have 0-mean and unit variance
+    '''
+    standardized_data = (data - np.mean(data)) / np.std(data)
+    return standardized_data
+
+
+def rmse(actual, predicted):
+    """
+    Calculates RMSE from actual and predicted values
+    Input:
+      actual (1D array-like): vector of actual values
+      predicted (1D array-like): vector of predicted/fitted values
+    Output:
+      a float, the root-mean square error
+    """
+    rmse = np.sqrt(np.mean((predicted - actual) ** 2))
+    return rmse
+
+
+def fix_overall_qual(data):
+    """
+    Input:
+      data (data frame): a data frame containing a Overall Qual.  Its values
+                         should be limited to those found in the codebook
+    Output:
+      data frame identical to the input except with a refactored Overall Qual column
+    """
+    data = data.replace({"Overall_Qual":
+                             {10: "Very Excellent",
+                              9: "Excellent",
+                              8: "Very Good",
+                              7: "Good",
+                              6: "Above Average",
+                              5: "Average",
+                              4: "Below Average",
+                              3: "Fair",
+                              2: "Poor",
+                              1: "Very Poor"
+                              }})
+    return data
+
+
+def ohe_overall_qual(data):
+    """
+    One-hot-encodes fireplace quality.  New columns are of the form fpq_QUALITY
+    """
+    cats = [
+        "Very Excellent",
+        "Excellent",
+        "Very Good",
+        "Good",
+        "Above Average",
+        "Average",
+        "Below Average",
+        "Fair",
+        "Poor",
+        "Very Poor",
+    ]
+
+    cat_type = CategoricalDtype(categories=cats)
+
+    data['Overall_Qual'] = data['Overall_Qual'].astype(cat_type)
+    data = pd.get_dummies(data,
+                          columns=['Overall_Qual'],
+                          drop_first=True)
+
+    return data
+
+
+def select_columns(data, *columns):
+    return data.loc[:, columns]
+
+
+def process_data_fm(data):
+    data = (
+        data
+            # Clean Data
+            .pipe(remove_outliers, 'Gr_Liv_Area', upper=5000)
+            .pipe(fix_overall_qual)
+
+            # Transform data
+            .pipe(add_total_bathrooms)
+            .pipe(select_columns,
+                  'SalePrice',
+                  'Gr_Liv_Area',
+                  'total_bathrooms',
+                  'Overall_Qual'
+                  )
+            .pipe(ohe_overall_qual)
+    )
+
+    # Return predictor and response variables separately
+    X = standardize_columns(data).drop(['SalePrice'], axis=1)
+    y = data['SalePrice']
+
+    return X, y
+
+# Load a fresh copy of the data
+full_data = pd.read_csv("ames_train.csv")
+
+# This makes the train-test split in this section reproducible across different runs
+# of the notebook.  You do not need this line to run train_test_split in general
+np.random.seed(300)
+
+# Split the data
+train, test = train_test_split(full_data, test_size=0.1)
+
+# Process our data
+X_test, y_test = process_data_fm(test)
+X_train, y_train = process_data_fm(train)
